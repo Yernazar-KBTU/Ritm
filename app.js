@@ -197,6 +197,24 @@
   const sortedTasks = () => data.tasks.slice().sort((a, b) =>
     (a.done - b.done) || String(a.due || '9999').localeCompare(String(b.due || '9999')) || String(a.title).localeCompare(String(b.title)));
 
+  // Предметы, упомянутые в блоке: код предмета в названии или подписи.
+  const coursesIn = (e) => {
+    const text = `${e.title || ''} ${e.sub || ''}`.toUpperCase();
+    return data.courses.filter((c) => c.code && text.includes(String(c.code).toUpperCase()));
+  };
+  const tasksFor = (code, includeDone = false) => sortedTasks().filter((t) => t.course === code && (includeDone || !t.done));
+  const openTasksIn = (e) => (e.kind === 'uni' || e.kind === 'study') ? coursesIn(e).reduce((n, c) => n + tasksFor(c.code).length, 0) : 0;
+  function nextClassDate(code) {
+    const today = startOfDay(new Date());
+    for (let i = 0; i < 15; i++) {
+      const dt = addDays(today, i);
+      const d = dayIdx(dt);
+      const hit = data.week.some((e) => e.day === d && e.kind === 'uni' && coursesIn(e).some((c) => c.code === code) && (i > 0 || toMin(e.end) > nowMin()));
+      if (hit) return dt;
+    }
+    return null;
+  }
+
   // ---------------------------------------------------------------- зал
   const workoutNames = () => {
     const names = new Set(Object.keys(data.gym.workouts));
@@ -338,6 +356,7 @@
   const ui = {
     tab: validTab(location.hash.slice(1)) ? location.hash.slice(1) : 'today',
     day: dayIdx(new Date()),
+    date: iso(new Date()),
     workout: null
   };
   function go(tab) {
@@ -364,11 +383,13 @@
   function tlItem(e, live) {
     const now = live && nowMin() >= e.s && nowMin() < e.e2;
     const tag = now ? 'Сейчас' : (e.kind === 'road' ? 'Дорога' : (KINDS[e.kind] || ''));
-    const act = e.generated ? 'data-act="road-info"' : `data-act="edit-event" data-id="${esc(e.id)}"`;
+    const act = e.generated ? `data-act="road-info" data-day="${e.day}" data-id="${esc(e.id)}"` : `data-act="event-details" data-id="${esc(e.id)}"`;
+    const n = openTasksIn(e);
+    const badge = n ? `<span class="pill ${e.kind === 'uni' ? 'light' : 'dark'}">${n} ${plural(n, 'задача', 'задачи', 'задач')}</span>` : '';
     return `<div class="tl-item">
       <div class="tl-time"><span>${fmt(e.s)}</span><span>${fmt(e.e2)}</span></div>
       <button type="button" class="tl-card ${esc(e.kind)}${now ? ' now' : ''}" ${act}>
-        <span class="row between"><span class="tag">${esc(tag)}</span><span class="s">${esc(dur(e.e2 - e.s))}</span></span>
+        <span class="row between"><span class="tag">${esc(tag)}</span><span class="row" style="gap:8px">${badge}<span class="s">${esc(dur(e.e2 - e.s))}</span></span></span>
         <span class="t">${esc(e.title)}</span>
         ${e.sub ? `<span class="s">${esc(e.sub)}</span>` : ''}
       </button>
@@ -391,16 +412,33 @@
     </div>`;
   }
 
-  function taskRows(list) {
-    if (!list.length) return '<div class="empty">Задач нет</div>';
-    return `<div class="list">${list.map((t) => {
-      const di = dueInfo(t);
-      return `<div class="list-row${t.done ? ' done' : ''}">
-        <input type="checkbox" class="check" data-act="toggle-task" data-id="${esc(t.id)}" ${t.done ? 'checked' : ''} aria-label="Выполнено: ${esc(t.title)}">
-        <span class="grow"><span class="t">${esc(t.title)}</span><span class="s">${esc(t.course || 'Без предмета')}</span></span>
-        <span class="pill ${di.cls}">${esc(di.txt)}</span>
-      </div>`;
-    }).join('')}</div>`;
+  function taskRow(t, hideCourse = false) {
+    const di = dueInfo(t);
+    const meta = hideCourse ? (t.note || '') : [t.course || 'Без предмета', t.note].filter(Boolean).join(' · ');
+    return `<div class="list-row${t.done ? ' done' : ''}">
+      <input type="checkbox" class="check" data-act="toggle-task" data-id="${esc(t.id)}" ${t.done ? 'checked' : ''} aria-label="Выполнено: ${esc(t.title)}">
+      <button type="button" class="grow row-btn" data-act="edit-task" data-id="${esc(t.id)}"><span class="t">${esc(t.title)}</span>${meta ? `<span class="s">${esc(meta)}</span>` : ''}</button>
+      <span class="pill ${di.cls}">${esc(di.txt)}</span>
+    </div>`;
+  }
+  function taskRows(list, hideCourse = false, empty = 'Задач нет') {
+    if (!list.length) return `<div class="empty">${empty}</div>`;
+    return `<div class="list">${list.map((t) => taskRow(t, hideCourse)).join('')}</div>`;
+  }
+  // Форма новой задачи; course задан — задача сразу привязана к предмету.
+  function taskForm(course, idp) {
+    const nd = course ? nextClassDate(course) : null;
+    const courseField = course
+      ? `<input type="hidden" name="course" value="${esc(course)}">`
+      : `<label class="sr-only" for="${idp}Course">Предмет</label><select id="${idp}Course" class="select" name="course"><option value="">Без предмета</option>${data.courses.map((c) => `<option value="${esc(c.code || c.name)}">${esc(c.code || c.name)}</option>`).join('')}</select>`;
+    return `<form class="inline-form" data-form="task" data-focus="#${idp}Title">
+      <label class="sr-only" for="${idp}Title">Задача</label>
+      <input id="${idp}Title" class="input" name="title" placeholder="Новая задача" required autocomplete="off">
+      ${courseField}
+      <label class="sr-only" for="${idp}Due">Срок</label>
+      <input id="${idp}Due" class="input" type="date" name="due" value="${nd ? iso(nd) : ''}">
+      <button type="submit" class="btn">${ICON.plus}Добавить</button>
+    </form>${nd ? `<p class="help">Срок по умолчанию: следующая пара, ${DAYS_FULL[dayIdx(nd)].toLowerCase()} ${nd.getDate()} ${MONTHS[nd.getMonth()]}.</p>` : ''}`;
   }
 
   function onboarding() {
@@ -504,9 +542,10 @@
     const cols = plans.map((plan, d) => {
       const evs = plan.map((e) => {
         const top = y(e.s), h = Math.max(18, y(e.e2) - top - 3);
-        const act = e.generated ? 'data-act="road-info"' : `data-act="edit-event" data-id="${esc(e.id)}"`;
+        const act = e.generated ? `data-act="road-info" data-day="${d}" data-id="${esc(e.id)}"` : `data-act="event-details" data-id="${esc(e.id)}"`;
+        const n = openTasksIn(e);
         return `<button type="button" class="ev ${esc(e.kind)}" style="top:${top}px;height:${h}px" ${act} title="${esc(e.title)} ${fmt(e.s)}–${fmt(e.e2)}">
-          <b>${esc(e.title)}</b><small>${fmt(e.s)}–${fmt(e.e2)}${e.sub ? ' · ' + esc(e.sub) : ''}</small></button>`;
+          <b>${n ? `<span class="ev-dot" aria-label="${n} ${plural(n, 'задача', 'задачи', 'задач')}">${n}</span>` : ''}${esc(e.title)}</b><small>${fmt(e.s)}–${fmt(e.e2)}${e.sub ? ' · ' + esc(e.sub) : ''}</small></button>`;
       }).join('');
       const nowLine = d === today && nowMin() >= startH * 60 && nowMin() <= endH * 60 ? `<div class="now-line" style="top:${y(nowMin())}px"></div>` : '';
       return `<div class="wk-col${d === today ? ' today' : ''}" style="height:${height}px" data-act="col" data-day="${d}" data-start="${startH}">${evs}${nowLine}</div>`;
@@ -528,7 +567,7 @@
           <h2 class="section-title">График</h2>
           <div class="legend"><span><i class="sw uni"></i>Пары</span><span><i class="sw study"></i>Учёба</span><span><i class="sw gym"></i>Зал</span><span><i class="sw road"></i>Дорога</span><span><i class="sw meal"></i>Еда</span></div>
         </div>
-        <p class="help">Нажми на пустое место в колонке, чтобы добавить блок в это время. Нажми на блок, чтобы изменить его.</p>
+        <p class="help">Нажми на блок, чтобы увидеть подробности и задачи. Нажми на пустое место в колонке, чтобы добавить блок в это время.</p>
         <div class="week-scroll"><div class="week">
           <div></div>${heads}
           <div class="wk-hours" style="height:${height}px">${hours.join('')}</div>${cols}
@@ -542,15 +581,15 @@
     const st = weekStats();
     const open = data.tasks.filter((t) => !t.done).length;
     const pct = g == null ? 0 : Math.round((g / 4) * 100);
-    const courseOpts = data.courses.map((c) => `<option value="${esc(c.code || c.name)}">${esc(c.code || c.name)}</option>`).join('');
     const doneCount = data.tasks.filter((t) => t.done).length;
 
     const courses = data.courses.map((c) => {
       const sc = hasScore(c) ? num(c.score) : null;
       const gr = sc == null ? null : gradeOf(sc);
       const sched = courseSchedule(c);
-      return `<button type="button" class="course" data-act="edit-course" data-id="${esc(c.id)}">
-        <span class="row between"><span class="pill dark">${esc(c.code || 'Предмет')}</span><span class="card-note">${esc(c.credits ? c.credits + ' кр.' : '')}</span></span>
+      const nt = c.code ? tasksFor(c.code).length : 0;
+      return `<button type="button" class="course" data-act="course-details" data-id="${esc(c.id)}">
+        <span class="row between"><span class="pill dark">${esc(c.code || 'Предмет')}</span><span class="card-note">${nt ? `${nt} ${plural(nt, 'задача', 'задачи', 'задач')}` : ''}${nt && c.credits ? ' · ' : ''}${esc(c.credits ? c.credits + ' кр.' : '')}</span></span>
         <span class="name">${esc(c.name)}</span>
         <span class="meta">${esc(c.teacher || '')}${c.teacher && sched ? '<br>' : ''}${esc(sched)}</span>
         <span class="row"><span class="bar"><span style="width:${sc == null ? 0 : Math.min(100, sc)}%"></span></span><span class="score">${sc == null ? '—' : `${sc}% · ${gr[2]}`}</span></span>
@@ -583,24 +622,8 @@
         </section>
         <section class="col-side">
           <div class="row between"><h2 class="section-title">Задачи</h2>${doneCount ? `<button type="button" class="btn btn-sm btn-ghost" data-act="clear-done">Убрать выполненные (${doneCount})</button>` : ''}</div>
-          <form class="inline-form" data-form="task">
-            <label class="sr-only" for="tTitle">Задача</label>
-            <input id="tTitle" class="input" name="title" placeholder="Новая задача" required autocomplete="off">
-            <label class="sr-only" for="tCourse">Предмет</label>
-            <select id="tCourse" class="select" name="course"><option value="">Без предмета</option>${courseOpts}</select>
-            <label class="sr-only" for="tDue">Срок</label>
-            <input id="tDue" class="input" type="date" name="due">
-            <button type="submit" class="btn">${ICON.plus}Добавить</button>
-          </form>
-          ${data.tasks.length ? `<div class="list">${sortedTasks().map((t) => {
-            const di = dueInfo(t);
-            return `<div class="list-row${t.done ? ' done' : ''}">
-              <input type="checkbox" class="check" data-act="toggle-task" data-id="${esc(t.id)}" ${t.done ? 'checked' : ''} aria-label="Выполнено: ${esc(t.title)}">
-              <span class="grow"><span class="t">${esc(t.title)}</span><span class="s">${esc(t.course || 'Без предмета')}</span></span>
-              <span class="pill ${di.cls}">${esc(di.txt)}</span>
-              <button type="button" class="icon-btn plain" data-act="del-task" data-id="${esc(t.id)}" aria-label="Удалить задачу">${ICON.trash}</button>
-            </div>`;
-          }).join('')}</div>` : '<div class="empty">Задач нет. Добавь первую выше.</div>'}
+          ${taskForm('', 's')}
+          ${taskRows(sortedTasks(), false, 'Задач нет. Добавь первую выше или нажми на предмет.')}
         </section>
       </div>`;
   }
@@ -755,24 +778,163 @@
     const view = $('#view');
     view.innerHTML = SCREENS[ui.tab]();
     renderSync();
+    refreshModal();
     document.title = `Ritm · ${TABS.find((t) => t[0] === ui.tab)[1]}`;
   }
 
   // ---------------------------------------------------------------- модальные окна
   let lastFocus = null;
-  function openModal(html) {
-    lastFocus = document.activeElement;
+  let modalView = null; // функция, если окно показывает живые данные и должно обновляться
+  let modalBack = null; // окно подробностей, к которому вернуться после формы
+  function openModal(html, view = null) {
+    if ($('#modal').hidden) { lastFocus = document.activeElement; modalBack = null; }
+    else if (!view && modalView) modalBack = modalView;
+    modalView = view;
     const m = $('#modal');
-    m.innerHTML = `<div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheetTitle">${html}</div>`;
+    m.innerHTML = `<div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheetTitle">${view ? view() : html}</div>`;
     m.hidden = false;
-    const f = m.querySelector('input, select, button');
-    if (f) f.focus();
+    const f = view ? m.querySelector('.sheet') : m.querySelector('input:not([type=hidden]), select, button');
+    if (f) { if (view) f.setAttribute('tabindex', '-1'); f.focus(); }
+  }
+  function refreshModal() {
+    if (!modalView || $('#modal').hidden) return;
+    const s = $('#modal .sheet');
+    if (s) s.innerHTML = modalView();
   }
   function closeModal() {
+    if (modalBack) { const v = modalBack; modalBack = null; openModal('', v); return; }
     const m = $('#modal');
     m.hidden = true;
     m.innerHTML = '';
+    modalView = null;
     if (lastFocus && document.contains(lastFocus)) lastFocus.focus();
+  }
+
+  // ---------------------------------------------------------------- окна подробностей
+  const infoRow = (k, v) => v ? `<div class="info-row"><span>${esc(k)}</span><b>${v}</b></div>` : '';
+  const pillKind = (k) => `<span class="pill ${k === 'uni' ? 'dark' : ''}">${esc(KINDS[k] || 'Дорога')}</span>`;
+
+  function courseTasksBlock(c) {
+    const done = tasksFor(c.code, true).filter((t) => t.done).length;
+    return `<div class="detail-block">
+      <div class="row between"><h3>Задачи · ${esc(c.code)}</h3>${done ? `<span class="card-note">выполнено: ${done}</span>` : ''}</div>
+      ${taskRows(tasksFor(c.code), true, 'Открытых задач нет')}
+      ${taskForm(c.code, 'd' + c.id)}
+    </div>`;
+  }
+
+  function eventDetailsView(id) {
+    return () => {
+      const e = data.week.find((x) => x.id === id);
+      if (!e) return '<h2 id="sheetTitle">Блок удалён</h2><div class="sheet-actions"><button type="button" class="btn" data-act="close">Закрыть</button></div>';
+      const s = toMin(e.start), en = toMin(e.end);
+      const linked = (e.kind === 'uni' || e.kind === 'study') ? coursesIn(e) : [];
+      const plan = dayPlan(e.day);
+      let travel = '';
+      if (e.place === 'campus') {
+        const go = plan.find((r) => r.kind === 'road' && r.title.startsWith('Дорога →') && !r.title.includes('зал'));
+        const back = plan.slice().reverse().find((r) => r.kind === 'road' && r.title === 'Дорога → дом');
+        const firstCampus = plan.find((r) => r.place === 'campus');
+        if (go && firstCampus && firstCampus.id === e.id) travel = `выезд в ${fmt(go.s)} (${esc(go.sub)})`;
+        else if (back && en + 5 === back.s) travel = `домой в ${fmt(back.s)}, дома в ${fmt(back.e2)}`;
+      }
+      let gymInfo = '';
+      if (e.kind === 'gym' && e.workout) {
+        const list = data.gym.workouts[e.workout] || [];
+        gymInfo = `<div class="detail-block"><h3>Программа · ${esc(e.workout)}</h3>${list.length ? `<div class="list">${list.map((x, i) => `<div class="list-row"><span class="card-note" style="width:22px">${i + 1}</span><span class="grow"><span class="t">${esc(x.name)}</span></span><span class="pill">${esc(x.sets)}${x.weight ? ' · ' + esc(x.weight) + (/\d$/.test(x.weight) ? ' кг' : '') : ''}</span></div>`).join('')}</div>` : '<div class="empty">Упражнений пока нет</div>'}
+          <button type="button" class="btn btn-light" data-act="open-gym" data-name="${esc(e.workout)}">Открыть в разделе «Зал»</button></div>`;
+      }
+      const c0 = linked[0];
+      return `
+        <div class="row between">${pillKind(e.kind)}<button type="button" class="icon-btn plain" data-act="close" aria-label="Закрыть">✕</button></div>
+        <h2 id="sheetTitle">${esc(e.title)}</h2>
+        <div class="info">
+          ${infoRow('Когда', `${DAYS_FULL[e.day]}, ${esc(e.start)}–${esc(e.end)} · ${esc(dur(en - s))}`)}
+          ${infoRow('Место', esc(PLACES[e.place] || ''))}
+          ${infoRow('Аудитория / заметка', esc(e.sub || ''))}
+          ${e.kind === 'uni' && c0 ? infoRow('Предмет', esc(c0.name)) : ''}
+          ${e.kind === 'uni' && c0 ? infoRow('Преподаватель', esc(c0.teacher || '')) : ''}
+          ${e.kind === 'uni' && c0 && hasScore(c0) ? infoRow('Текущий балл', `${num(c0.score)}% · ${gradeOf(num(c0.score))[2]}`) : ''}
+          ${infoRow('Дорога', travel)}
+        </div>
+        ${gymInfo}
+        ${linked.map(courseTasksBlock).join('')}
+        ${!linked.length && (e.kind === 'uni' || e.kind === 'study') ? '<p class="help">Чтобы видеть здесь задачи, начни название блока с кода предмета, например «CSCI2208 …».</p>' : ''}
+        <div class="sheet-actions">
+          <button type="button" class="btn btn-ghost" data-act="event-edit" data-id="${esc(e.id)}">Изменить блок</button>
+          <span class="spacer"></span>
+          <button type="button" class="btn" data-act="close">Готово</button>
+        </div>`;
+    };
+  }
+
+  function courseDetailsView(id) {
+    return () => {
+      const c = data.courses.find((x) => x.id === id);
+      if (!c) return '<h2 id="sheetTitle">Предмет удалён</h2><div class="sheet-actions"><button type="button" class="btn" data-act="close">Закрыть</button></div>';
+      const sc = hasScore(c) ? num(c.score) : null;
+      const nd = c.code ? nextClassDate(c.code) : null;
+      return `
+        <div class="row between"><span class="pill dark">${esc(c.code || 'Предмет')}</span><button type="button" class="icon-btn plain" data-act="close" aria-label="Закрыть">✕</button></div>
+        <h2 id="sheetTitle">${esc(c.name)}</h2>
+        <div class="info">
+          ${infoRow('Преподаватель', esc(c.teacher || ''))}
+          ${infoRow('Пары', esc(courseSchedule(c)))}
+          ${infoRow('Следующая пара', nd ? `${DAYS_FULL[dayIdx(nd)]}, ${nd.getDate()} ${MONTHS[nd.getMonth()]}` : '')}
+          ${infoRow('Кредиты', c.credits ? esc(c.credits) : '')}
+          ${infoRow('Текущий балл', sc == null ? 'не указан' : `${sc}% · ${gradeOf(sc)[2]} (${gradeOf(sc)[1].toFixed(2).replace('.', ',')})`)}
+        </div>
+        ${c.code ? courseTasksBlock(c) : '<p class="help">Укажи код предмета, чтобы привязывать к нему задачи.</p>'}
+        <div class="sheet-actions">
+          <button type="button" class="btn btn-ghost" data-act="course-edit" data-id="${esc(c.id)}">Изменить предмет</button>
+          <span class="spacer"></span>
+          <button type="button" class="btn" data-act="close">Готово</button>
+        </div>`;
+    };
+  }
+
+  function roadDetailsView(day, id) {
+    return () => {
+      const r = dayPlan(day).find((x) => x.id === id);
+      if (!r) return '<h2 id="sheetTitle">Дорога</h2><p class="help">Этого отрезка больше нет в графике.</p><div class="sheet-actions"><button type="button" class="btn" data-act="close">Закрыть</button></div>';
+      const toCampus = r.title.startsWith('Дорога →') && !r.title.includes('зал') && !r.title.includes('дом');
+      const home = data.profile.home || 'Дом';
+      const campus = [campusName(), data.profile.campusAddress].filter(Boolean).join(', ');
+      const route = r.title.includes('зал') ? (r.title.includes('←') ? `${data.gym.club || 'Зал'} → дальше` : `→ ${data.gym.club || 'зал'}`) : (toCampus ? `${home} → ${campus}` : `${campus} → ${home}`);
+      return `
+        <div class="row between"><span class="pill outline">Дорога</span><button type="button" class="icon-btn plain" data-act="close" aria-label="Закрыть">✕</button></div>
+        <h2 id="sheetTitle">${esc(r.title)}</h2>
+        <div class="info">
+          ${infoRow('Когда', `${DAYS_FULL[day]}, ${fmt(r.s)}–${fmt(r.e2)}`)}
+          ${infoRow('Маршрут', esc(route))}
+          ${infoRow('В пути', esc(r.sub))}
+        </div>
+        <p class="help">Дорога ставится сама: перед первым и после последнего блока в университете, с 5 минутами запаса. В час пик (будни, приезд 07:30–10:00 или отъезд 17:00–19:30) добавляется ${num(data.commute.peakExtra)} мин.</p>
+        <div class="sheet-actions">
+          <button type="button" class="btn btn-ghost" data-act="tab" data-tab="settings">Изменить время в пути</button>
+          <span class="spacer"></span>
+          <button type="button" class="btn" data-act="close">Готово</button>
+        </div>`;
+    };
+  }
+
+  function openTask(t) {
+    const opts = data.courses.map((c) => { const v = c.code || c.name; return `<option value="${esc(v)}" ${v === t.course ? 'selected' : ''}>${esc(v)} · ${esc(c.name)}</option>`; }).join('');
+    openModal(`
+      <h2 id="sheetTitle">Задача</h2>
+      <form data-form="task-edit" data-id="${esc(t.id)}" class="form-grid">
+        <label class="field full">Что сделать<input class="input" name="title" value="${esc(t.title)}" required autocomplete="off"></label>
+        <label class="field full">Подробности<textarea class="input textarea" name="note" rows="3" placeholder="Что именно, ссылки, требования">${esc(t.note || '')}</textarea></label>
+        <label class="field">Предмет<select class="select" name="course"><option value="">Без предмета</option>${opts}</select></label>
+        <label class="field">Срок<input class="input" type="date" name="due" value="${esc(t.due || '')}"></label>
+        <label class="field full row" style="flex-direction:row;align-items:center;gap:10px"><input type="checkbox" class="check" name="done" ${t.done ? 'checked' : ''}>Выполнено</label>
+        <div class="sheet-actions full">
+          <button type="button" class="btn btn-ghost" data-act="del-task" data-id="${esc(t.id)}">${ICON.trash}Удалить</button>
+          <span class="spacer"></span>
+          <button type="button" class="btn btn-light" data-act="close">Отмена</button>
+          <button type="submit" class="btn">Сохранить</button>
+        </div>
+      </form>`);
   }
 
   function openEvent(ev, preset = {}) {
@@ -821,6 +983,7 @@
   }
 
   // ---------------------------------------------------------------- тост
+  let pendingImport = null;
   let toastTimer = null;
   function toast(msg) {
     const t = $('#toast');
@@ -850,8 +1013,28 @@
     day: (el) => { ui.day = +el.dataset.day; render(); },
     'open-day': (el) => { ui.day = +el.dataset.day; go('today'); },
     'add-event': () => openEvent(null),
-    'edit-event': (el) => { const e = data.week.find((x) => x.id === el.dataset.id); if (e) openEvent(e); },
-    'road-info': () => toast('Дорога считается сама. Время меняется в настройках.'),
+    'event-details': (el) => openModal('', eventDetailsView(el.dataset.id)),
+    'event-edit': (el) => { const e = data.week.find((x) => x.id === el.dataset.id); if (e) openEvent(e); },
+    'road-info': (el) => openModal('', roadDetailsView(+el.dataset.day, el.dataset.id)),
+    'course-details': (el) => openModal('', courseDetailsView(el.dataset.id)),
+    'course-edit': (el) => { const c = data.courses.find((x) => x.id === el.dataset.id); if (c) openCourse(c); },
+    'edit-task': (el) => { const t = data.tasks.find((x) => x.id === el.dataset.id); if (t) openTask(t); },
+    'open-gym': (el) => { ui.workout = el.dataset.name; closeModal(); go('gym'); },
+    'import-replace': () => { if (!pendingImport) return; data = normalize(pendingImport); pendingImport = null; closeModal(); commit(); toast('Данные заменены'); },
+    'import-merge': () => {
+      if (!pendingImport) return;
+      const src = normalize(pendingImport);
+      let added = 0;
+      ['week', 'courses', 'tasks'].forEach((k) => {
+        const have = new Set(data[k].map((x) => x.id));
+        src[k].forEach((x) => { if (x && x.id && !have.has(x.id)) { data[k].push(x); added++; } });
+      });
+      Object.entries(src.gym.workouts).forEach(([n, list]) => { if (!data.gym.workouts[n]) { data.gym.workouts[n] = list; added++; } });
+      pendingImport = null;
+      closeModal();
+      commit();
+      toast(added ? `Добавлено: ${added}` : 'Нового ничего нет');
+    },
     col: (el, ev) => {
       const r = el.getBoundingClientRect();
       const startH = +el.dataset.start;
@@ -862,20 +1045,26 @@
     'del-event': (el) => {
       if (!confirm('Удалить этот блок из графика?')) return;
       data.week = data.week.filter((x) => x.id !== el.dataset.id);
+      modalBack = null;
       closeModal();
       commit();
       toast('Блок удалён');
     },
-    close: () => closeModal(),
+    close: () => { if (modalView) modalBack = null; closeModal(); },
     'add-course': () => openCourse(null),
-    'edit-course': (el) => { const c = data.courses.find((x) => x.id === el.dataset.id); if (c) openCourse(c); },
     'del-course': (el) => {
       if (!confirm('Удалить предмет?')) return;
       data.courses = data.courses.filter((x) => x.id !== el.dataset.id);
+      modalBack = null;
       closeModal();
       commit();
     },
-    'del-task': (el) => { data.tasks = data.tasks.filter((x) => x.id !== el.dataset.id); commit(); },
+    'del-task': (el) => {
+      if (!confirm('Удалить задачу?')) return;
+      data.tasks = data.tasks.filter((x) => x.id !== el.dataset.id);
+      if (!modalView) closeModal();
+      commit();
+    },
     'clear-done': () => { data.tasks = data.tasks.filter((x) => !x.done); commit(); toast('Выполненные убраны'); },
     checkin: () => {
       const d = iso(new Date());
@@ -930,7 +1119,7 @@
   };
 
   document.addEventListener('click', (e) => {
-    if (e.target.id === 'modal') { closeModal(); return; }
+    if (e.target.id === 'modal') { modalBack = null; closeModal(); return; }
     const el = e.target.closest('[data-act]');
     if (!el || el.tagName === 'INPUT') return;
     const fn = ACTIONS[el.dataset.act];
@@ -973,14 +1162,15 @@
       const reader = new FileReader();
       reader.onload = () => {
         try {
-          const parsed = JSON.parse(reader.result);
-          if (!confirm('Заменить данные на этом устройстве содержимым файла?')) return;
-          data = normalize(parsed);
-          commit();
-          toast('Данные загружены');
+          pendingImport = JSON.parse(reader.result);
+          openModal(`<h2 id="sheetTitle">Загрузить файл</h2>
+            <p class="help"><b>Добавить новое</b>: из файла добавятся блоки, предметы, задачи и программы, которых здесь ещё нет. Твои изменения останутся.</p>
+            <p class="help"><b>Заменить всё</b>: данные на устройстве (и в GitHub, если подключён) станут такими же, как в файле.</p>
+            <div class="sheet-actions"><button type="button" class="btn btn-light" data-act="close">Отмена</button><span class="spacer"></span><button type="button" class="btn btn-ghost" data-act="import-replace">Заменить всё</button><button type="button" class="btn" data-act="import-merge">Добавить новое</button></div>`);
         } catch (err) {
           toast('Не получилось прочитать файл');
         }
+        el.value = '';
       };
       reader.readAsText(el.files[0]);
     }
@@ -1035,10 +1225,25 @@
     if (kind === 'task') {
       const title = String(f.title || '').trim();
       if (!title) return;
-      data.tasks.push({ id: uid(), title, course: f.course || '', due: f.due || '', done: false });
+      data.tasks.push({ id: uid(), title, note: '', course: f.course || '', due: f.due || '', done: false });
+      const focusSel = form.dataset.focus;
       commit();
-      const inp = $('#tTitle');
+      toast('Задача добавлена');
+      const inp = focusSel && $(focusSel);
       if (inp) inp.focus();
+    }
+
+    if (kind === 'task-edit') {
+      const t = data.tasks.find((x) => x.id === form.dataset.id);
+      if (!t) return;
+      t.title = String(f.title || '').trim() || t.title;
+      t.note = String(f.note || '').trim();
+      t.course = f.course || '';
+      t.due = f.due || '';
+      t.done = f.done === 'on';
+      closeModal();
+      commit();
+      toast('Сохранено');
     }
 
     if (kind === 'ex') {
@@ -1063,7 +1268,8 @@
 
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') {
-      if (ui.day !== dayIdx(new Date()) && ui.tab === 'today') ui.day = dayIdx(new Date());
+      // Новый день наступил, пока приложение было свёрнуто: показываем сегодня.
+      if (ui.date !== iso(new Date())) { ui.date = iso(new Date()); ui.day = dayIdx(new Date()); }
       safeRerender();
       syncNow('pull');
     }

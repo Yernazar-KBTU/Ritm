@@ -341,3 +341,20 @@ a { color: var(--ink); }
 }
 .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 @media (min-width: 900px) { .toast { bottom: 32px; } }
+
+/* ---------- details & task rows ---------- */
+.row-btn { border: 0; background: transparent; padding: 0; text-align: left; color: inherit; cursor: pointer; }
+.row-btn:hover .t { text-decoration: underline; text-underline-offset: 3px; }
+.info { background: var(--card); border-radius: var(--radius-m); padding: 4px 16px; display: flex; flex-direction: column; }
+.info-row { display: flex; justify-content: space-between; gap: 16px; padding: 12px 0; font-size: 14px; }
+.info-row + .info-row { border-top: 1px solid var(--soft-2); }
+.info-row span { color: var(--muted); font-weight: 600; flex-shrink: 0; }
+.info-row b { font-weight: 700; text-align: right; overflow-wrap: anywhere; }
+.detail-block { display: flex; flex-direction: column; gap: 10px; }
+.detail-block h3 { margin: 0; font-size: 16px; font-weight: 800; }
+.sheet .inline-form { background: var(--soft-2); }
+.sheet .list { background: var(--card); }
+.textarea { min-height: 84px; padding: 12px 14px; resize: vertical; line-height: 1.45; }
+.ev-dot { display: inline-flex; align-items: center; justify-content: center; min-width: 16px; height: 16px; padding: 0 4px; margin-right: 4px; border-radius: 999px; font-size: 10px; font-weight: 800; background: var(--card); color: var(--ink); vertical-align: 1px; }
+.ev.study .ev-dot, .ev.gym .ev-dot, .ev.other .ev-dot { background: var(--ink); color: var(--on-dark); }
+.sheet .icon-btn.plain { font-size: 18px; font-weight: 700; }
