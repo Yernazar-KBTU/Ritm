@@ -16,7 +16,7 @@
   --dark-3: #3A3A3F;
   --on-dark: #FFFFFF;
   --on-dark-muted: #B4B4BA;
-  --danger: #141414;
+  --alert: #D92D20;
   --radius-xl: 32px;
   --radius-l: 24px;
   --radius-m: 18px;
@@ -358,3 +358,19 @@ a { color: var(--ink); }
 .ev-dot { display: inline-flex; align-items: center; justify-content: center; min-width: 16px; height: 16px; padding: 0 4px; margin-right: 4px; border-radius: 999px; font-size: 10px; font-weight: 800; background: var(--card); color: var(--ink); vertical-align: 1px; }
 .ev.study .ev-dot, .ev.gym .ev-dot, .ev.other .ev-dot { background: var(--ink); color: var(--on-dark); }
 .sheet .icon-btn.plain { font-size: 18px; font-weight: 700; }
+
+/* ---------- периоды «только дома» ---------- */
+.zone-wrap { border: 2px solid var(--alert); border-radius: 28px; padding: 10px 10px 12px; display: flex; flex-direction: column; gap: 10px; margin: 4px -12px; }
+.zone-label { font-size: 12px; font-weight: 800; color: var(--alert); padding: 0 6px; letter-spacing: 0.02em; }
+.zone-empty { border: 1.5px dashed #A8A8AD; background: transparent; border-radius: var(--radius-l); min-height: 52px; color: var(--muted); font-weight: 700; font-size: 13px; }
+.wk-zone { position: absolute; left: 0; right: 0; border: 2px solid var(--alert); border-radius: 14px; pointer-events: none; z-index: 2; }
+.wk-zone span { position: absolute; top: -9px; left: 8px; font-size: 10px; font-weight: 800; color: var(--alert); background: var(--card); padding: 0 6px; border-radius: 999px; white-space: nowrap; }
+.sw.zone { border: 2px solid var(--alert); }
+.tag.alert { background: var(--alert); color: #fff; }
+.tl-card.conflict { outline: 2px dashed var(--alert); outline-offset: 3px; }
+.ev.conflict { outline: 2px dashed var(--alert); outline-offset: -2px; }
+.warn { margin: 0; padding: 12px 14px; border-radius: 16px; border: 2px solid var(--alert); color: var(--ink); font-size: 14px; font-weight: 600; line-height: 1.45; background: var(--card); }
+.chip { min-height: 40px; min-width: 44px; padding: 0 12px; border-radius: 999px; border: 1px solid var(--line-2); background: var(--card); font-weight: 700; font-size: 13px; color: var(--ink); }
+.chip[aria-pressed="true"] { background: var(--ink); color: var(--on-dark); border-color: var(--ink); }
+.zone-edit { display: flex; flex-direction: column; gap: 10px; padding: 12px; border-radius: var(--radius-m); background: var(--soft); }
+@media (max-width: 560px) { .zone-wrap { margin: 4px -6px; } }

@@ -1,5 +1,5 @@
 // Офлайн-кэш приложения. При изменении файлов увеличь VERSION.
-const VERSION = 'ritm-v2';
+const VERSION = 'ritm-v3';
 const SHELL = [
   './',
   'index.html',

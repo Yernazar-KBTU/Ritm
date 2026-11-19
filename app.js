@@ -71,7 +71,8 @@
       gym: { club: '', travel: 0, workouts: {}, log: [] },
       week: [],
       courses: [],
-      tasks: []
+      tasks: [],
+      zones: []
     };
   }
   function normalize(d) {
@@ -91,7 +92,8 @@
       },
       week: Array.isArray(d.week) ? d.week : [],
       courses: Array.isArray(d.courses) ? d.courses : [],
-      tasks: Array.isArray(d.tasks) ? d.tasks : []
+      tasks: Array.isArray(d.tasks) ? d.tasks : [],
+      zones: Array.isArray(d.zones) ? d.zones : []
     };
   }
 
@@ -159,6 +161,22 @@
       if (campus) st.campusDays++;
     }
     return st;
+  }
+
+  // ---------------------------------------------------------------- периоды «только дома»
+  const AT_HOME = ['home', 'online'];
+  function zonesFor(d) {
+    return data.zones
+      .filter((z) => Array.isArray(z.days) && z.days.includes(d))
+      .map((z) => { const s = toMin(z.start); let e = toMin(z.end); if (e <= s) e = 1440; return { ...z, s, e2: e }; })
+      .sort((a, b) => a.s - b.s);
+  }
+  const zoneEnd = (z) => (z.e2 >= 1440 ? '24:00' : fmt(z.e2));
+  const zoneLabel = (z) => `${z.label || 'Только дома'} · ${fmt(z.s)}–${zoneEnd(z)}`;
+  // Блок пересекается с периодом «только дома», но он не дома.
+  function conflictZone(e) {
+    if (AT_HOME.includes(e.place)) return null;
+    return zonesFor(e.day).find((z) => e.s < z.e2 && e.e2 > z.s) || null;
   }
 
   // ---------------------------------------------------------------- учёба
@@ -386,14 +404,28 @@
     const act = e.generated ? `data-act="road-info" data-day="${e.day}" data-id="${esc(e.id)}"` : `data-act="event-details" data-id="${esc(e.id)}"`;
     const n = openTasksIn(e);
     const badge = n ? `<span class="pill ${e.kind === 'uni' ? 'light' : 'dark'}">${n} ${plural(n, 'задача', 'задачи', 'задач')}</span>` : '';
+    const cz = conflictZone(e);
     return `<div class="tl-item">
       <div class="tl-time"><span>${fmt(e.s)}</span><span>${fmt(e.e2)}</span></div>
-      <button type="button" class="tl-card ${esc(e.kind)}${now ? ' now' : ''}" ${act}>
-        <span class="row between"><span class="tag">${esc(tag)}</span><span class="row" style="gap:8px">${badge}<span class="s">${esc(dur(e.e2 - e.s))}</span></span></span>
+      <button type="button" class="tl-card ${esc(e.kind)}${now ? ' now' : ''}${cz ? ' conflict' : ''}" ${act}>
+        <span class="row between"><span class="row" style="gap:6px"><span class="tag">${esc(tag)}</span>${cz ? '<span class="tag alert">Нужно быть дома</span>' : ''}</span><span class="row" style="gap:8px">${badge}<span class="s">${esc(dur(e.e2 - e.s))}</span></span></span>
         <span class="t">${esc(e.title)}</span>
         ${e.sub ? `<span class="s">${esc(e.sub)}</span>` : ''}
       </button>
     </div>`;
+  }
+
+  function timelineHtml(plan, d, live) {
+    const zs = zonesFor(d);
+    let html = '', i = 0;
+    zs.forEach((z) => {
+      while (i < plan.length && plan[i].s < z.s) html += tlItem(plan[i++], live);
+      let inner = '';
+      while (i < plan.length && plan[i].s < z.e2) inner += tlItem(plan[i++], live);
+      html += `<div class="zone-wrap"><div class="zone-label">${esc(zoneLabel(z))}</div>${inner || `<button type="button" class="zone-empty" data-act="add-at" data-day="${d}" data-start="${fmt(z.s)}">Свободно. Добавить дело дома</button>`}</div>`;
+    });
+    while (i < plan.length) html += tlItem(plan[i++], live);
+    return html;
   }
 
   function departureCard(d) {
@@ -500,7 +532,7 @@
       <div class="cols">
         <section class="col-main" aria-label="План дня">
           <h2 class="section-title">План дня</h2>
-          ${plan.length ? `<div class="timeline">${plan.map((e) => tlItem(e, d === today)).join('')}</div>` : '<div class="empty">На этот день ничего нет. Нажми «Добавить».</div>'}
+          ${plan.length || zonesFor(d).length ? `<div class="timeline">${timelineHtml(plan, d, d === today)}</div>` : '<div class="empty">На этот день ничего нет. Нажми «Добавить».</div>'}
         </section>
         <aside class="col-side">
           ${departureCard(d)}
@@ -530,7 +562,8 @@
     const plans = DAYS.map((_, d) => dayPlan(d));
     const all = plans.flat();
     const startH = Math.min(7, ...all.map((e) => Math.floor(e.s / 60)));
-    const endH = Math.max(22, ...all.map((e) => Math.ceil(e.e2 / 60)));
+    const allZones = DAYS.map((_, d) => zonesFor(d)).flat();
+    const endH = Math.max(22, ...all.map((e) => Math.ceil(e.e2 / 60)), ...allZones.map((z) => Math.ceil(z.e2 / 60)));
     const height = (endH - startH) * HOUR_PX;
     const y = (m) => ((m - startH * 60) * HOUR_PX) / 60;
     const st = weekStats();
@@ -544,11 +577,12 @@
         const top = y(e.s), h = Math.max(18, y(e.e2) - top - 3);
         const act = e.generated ? `data-act="road-info" data-day="${d}" data-id="${esc(e.id)}"` : `data-act="event-details" data-id="${esc(e.id)}"`;
         const n = openTasksIn(e);
-        return `<button type="button" class="ev ${esc(e.kind)}" style="top:${top}px;height:${h}px" ${act} title="${esc(e.title)} ${fmt(e.s)}–${fmt(e.e2)}">
+        return `<button type="button" class="ev ${esc(e.kind)}${conflictZone(e) ? ' conflict' : ''}" style="top:${top}px;height:${h}px" ${act} title="${esc(e.title)} ${fmt(e.s)}–${fmt(e.e2)}">
           <b>${n ? `<span class="ev-dot" aria-label="${n} ${plural(n, 'задача', 'задачи', 'задач')}">${n}</span>` : ''}${esc(e.title)}</b><small>${fmt(e.s)}–${fmt(e.e2)}${e.sub ? ' · ' + esc(e.sub) : ''}</small></button>`;
       }).join('');
       const nowLine = d === today && nowMin() >= startH * 60 && nowMin() <= endH * 60 ? `<div class="now-line" style="top:${y(nowMin())}px"></div>` : '';
-      return `<div class="wk-col${d === today ? ' today' : ''}" style="height:${height}px" data-act="col" data-day="${d}" data-start="${startH}">${evs}${nowLine}</div>`;
+      const zones = zonesFor(d).map((z) => `<div class="wk-zone" style="top:${y(z.s)}px;height:${y(z.e2) - y(z.s)}px"><span>${esc(z.label || 'Только дома')}</span></div>`).join('');
+      return `<div class="wk-col${d === today ? ' today' : ''}" style="height:${height}px" data-act="col" data-day="${d}" data-start="${startH}">${zones}${evs}${nowLine}</div>`;
     }).join('');
 
     return `
@@ -565,7 +599,7 @@
       <section class="card" aria-label="Недельный график">
         <div class="row between wrap">
           <h2 class="section-title">График</h2>
-          <div class="legend"><span><i class="sw uni"></i>Пары</span><span><i class="sw study"></i>Учёба</span><span><i class="sw gym"></i>Зал</span><span><i class="sw road"></i>Дорога</span><span><i class="sw meal"></i>Еда</span></div>
+          <div class="legend"><span><i class="sw uni"></i>Пары</span><span><i class="sw study"></i>Учёба</span><span><i class="sw gym"></i>Зал</span><span><i class="sw road"></i>Дорога</span><span><i class="sw meal"></i>Еда</span>${data.zones.length ? '<span><i class="sw zone"></i>Только дома</span>' : ''}</div>
         </div>
         <p class="help">Нажми на блок, чтобы увидеть подробности и задачи. Нажми на пустое место в колонке, чтобы добавить блок в это время.</p>
         <div class="week-scroll"><div class="week">
@@ -743,6 +777,19 @@
           <p class="help">Дорога ставится в график сама: перед первым и после последнего блока с местом «Университет». Час пик: будни, приезд 07:30–10:00 или отъезд 17:00–19:30. Плюс 5 минут запаса.</p>
         </section>
         <section class="card">
+          <div class="card-title">Обязательно дома</div>
+          <p class="help">В эти часы в графике рисуется красная рамка. Дела туда добавлять можно. Блоки не дома (зал, университет) будут помечены красным.</p>
+          ${data.zones.map((z) => `<div class="zone-edit">
+            <div class="row wrap" style="gap:6px" role="group" aria-label="Дни">${DAYS.map((n, i) => `<button type="button" class="chip" data-act="zone-day" data-id="${esc(z.id)}" data-day="${i}" aria-pressed="${(z.days || []).includes(i)}">${n}</button>`).join('')}</div>
+            <div class="row wrap" style="align-items:flex-end">
+              <label class="field" style="flex:1 1 110px">С<input class="input" type="time" data-zone="start" data-id="${esc(z.id)}" value="${esc(z.start)}"></label>
+              <label class="field" style="flex:1 1 110px">До (00:00 — полночь)<input class="input" type="time" data-zone="end" data-id="${esc(z.id)}" value="${esc(z.end === '24:00' ? '00:00' : z.end)}"></label>
+              <button type="button" class="icon-btn" data-act="zone-del" data-id="${esc(z.id)}" aria-label="Удалить период">${ICON.trash}</button>
+            </div>
+          </div>`).join('')}
+          <button type="button" class="btn btn-light" data-act="zone-add">${ICON.plus}Добавить период</button>
+        </section>
+        <section class="card">
           <div class="card-title">Зал</div>
           ${field('Клуб', 'gym.club', data.gym.club, 'placeholder="Invictus …"')}
           ${field('Дорога до зала, минут (0 — не учитывать)', 'gym.travel', data.gym.travel, 'type="number" inputmode="numeric" min="0" max="180"')}
@@ -857,6 +904,7 @@
           ${e.kind === 'uni' && c0 && hasScore(c0) ? infoRow('Текущий балл', `${num(c0.score)}% · ${gradeOf(num(c0.score))[2]}`) : ''}
           ${infoRow('Дорога', travel)}
         </div>
+        ${(() => { const cz = conflictZone({ ...e, s, e2: en }); return cz ? `<p class="warn">В это время нужно быть дома (${esc(zoneLabel(cz))}). Перенеси блок или поставь место «Дом».</p>` : ''; })()}
         ${gymInfo}
         ${linked.map(courseTasksBlock).join('')}
         ${!linked.length && (e.kind === 'uni' || e.kind === 'study') ? '<p class="help">Чтобы видеть здесь задачи, начни название блока с кода предмета, например «CSCI2208 …».</p>' : ''}
@@ -1013,6 +1061,17 @@
     day: (el) => { ui.day = +el.dataset.day; render(); },
     'open-day': (el) => { ui.day = +el.dataset.day; go('today'); },
     'add-event': () => openEvent(null),
+    'add-at': (el) => { const s = toMin(el.dataset.start); openEvent(null, { day: +el.dataset.day, start: fmt(s), end: fmt(Math.min(s + 60, 1435)) }); },
+    'zone-add': () => { data.zones.push({ id: uid(), label: 'Только дома', days: [], start: '13:00', end: '00:00' }); commit(); },
+    'zone-del': (el) => { if (!confirm('Удалить этот период?')) return; data.zones = data.zones.filter((z) => z.id !== el.dataset.id); commit(); },
+    'zone-day': (el) => {
+      const z = data.zones.find((x) => x.id === el.dataset.id);
+      if (!z) return;
+      const d = +el.dataset.day;
+      z.days = Array.isArray(z.days) ? z.days : [];
+      z.days = z.days.includes(d) ? z.days.filter((x) => x !== d) : [...z.days, d].sort();
+      commit();
+    },
     'event-details': (el) => openModal('', eventDetailsView(el.dataset.id)),
     'event-edit': (el) => { const e = data.week.find((x) => x.id === el.dataset.id); if (e) openEvent(e); },
     'road-info': (el) => openModal('', roadDetailsView(+el.dataset.day, el.dataset.id)),
@@ -1025,7 +1084,7 @@
       if (!pendingImport) return;
       const src = normalize(pendingImport);
       let added = 0;
-      ['week', 'courses', 'tasks'].forEach((k) => {
+      ['week', 'courses', 'tasks', 'zones'].forEach((k) => {
         const have = new Set(data[k].map((x) => x.id));
         src[k].forEach((x) => { if (x && x.id && !have.has(x.id)) { data[k].push(x); added++; } });
       });
@@ -1147,6 +1206,11 @@
       if (syncOn()) syncNow('pull'); else setSync('off');
       return;
     }
+    if (el.dataset.zone) {
+      const z = data.zones.find((x) => x.id === el.dataset.id);
+      if (z && el.value) { z[el.dataset.zone] = el.value; commit({ render: false }); toast('Сохранено'); }
+      return;
+    }
     if (el.dataset.ex) {
       const f = findEx(el.dataset.id);
       if (f) { f.ex[el.dataset.ex] = el.value.trim(); commit({ render: false }); }
@@ -1204,7 +1268,8 @@
       if (i >= 0) data.week[i] = item; else data.week.push(item);
       closeModal();
       commit();
-      toast('Сохранено');
+      const cz = conflictZone({ ...item, s, e2: en });
+      toast(cz ? `Сохранено, но в это время нужно быть дома` : 'Сохранено');
     }
 
     if (kind === 'course') {
